@@ -1,0 +1,51 @@
+/*
+ * Minimal styles for the temp export HTML only (html.print-mode).
+ * Layout is preserved as rendered at desktop width; PDF width is handled via
+ * webContents.printToPDF({ scale }) in main.js — no grid/card enforcement here.
+ */
+
+@page {
+  size: Letter landscape;
+  margin: 0.5in;
+}
+
+/* Match export window width; no column/grid overrides */
+html.print-mode {
+  width: 100%;
+  min-height: 100%;
+  box-sizing: border-box !important;
+}
+
+html.print-mode body {
+  width: 100%;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+@media print {
+  html.print-mode *,
+  html.print-mode *::before,
+  html.print-mode *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  html.print-mode [style*="position: sticky"] {
+    position: static !important;
+  }
+}
+  /* Editor shell — not in export HTML; harmless */
+  .toolbar,
+  .toolbar-toast,
+  .sidebar,
+  .chat-panel,
+  .hover-controls {
+    display: none !important;
+  }
+
+  [data-editor-id],
+  .preview-editing {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+}

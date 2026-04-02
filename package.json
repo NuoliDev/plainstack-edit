@@ -1,0 +1,22 @@
+{
+  "name": "html-text-editor-preview",
+  "version": "0.1.0",
+  "description": "Local HTML preview with outline — Sprint 1 (read-only)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "electron",
+    "html",
+    "preview"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^41.1.1"
+  },
+  "dependencies": {
+    "firebase": "^12.11.0"
+  }
+}
