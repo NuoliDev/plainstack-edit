@@ -4,7 +4,8 @@
   "description": "Local HTML preview with outline — Sprint 1 (read-only)",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node tests/normalize-inline.cjs && node tests/editor-host-sync.cjs"
   },
   "keywords": [
     "electron",
@@ -14,7 +15,8 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^41.1.1"
+    "electron": "^41.1.1",
+    "jsdom": "^25.0.1"
   },
   "dependencies": {
     "firebase": "^12.11.0"
