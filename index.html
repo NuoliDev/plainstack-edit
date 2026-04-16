@@ -2,57 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Shell loads only same-origin scripts; preview iframe (srcdoc) needs inline + file: for local HTML. -->
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' file: data: blob:; style-src 'self' 'unsafe-inline' file: blob:; img-src 'self' data: blob: file:; font-src 'self' data: blob: file:; media-src 'self' file: data: blob:; connect-src 'self' file: data: blob: http: https: ws: wss:; worker-src 'self' blob: data:; frame-src 'self' file: data: blob: http: https:;"
-    />
-    <title>Plainstack - an html editor</title>
-    <link rel="stylesheet" href="styles.css" />
+    <title>Plainstack</title>
+    <meta http-equiv="refresh" content="0; url=public/index.html" />
   </head>
   <body>
-    <header class="toolbar">
-      <h1 class="app-title">Plainstack - an html editor</h1>
-      <div class="toolbar-actions">
-        <button type="button" id="btn-open" class="btn-primary">Open HTML</button>
-        <button type="button" id="btn-save" class="btn-secondary">Save</button>
-        <button type="button" id="btn-save-as" class="btn-secondary">Save As</button>
-        <button
-          type="button"
-          id="btn-export-pdf"
-          class="btn-secondary"
-          title="Export as PDF (print mode: fixed desktop layout, document only)"
-        >
-          Export PDF
-        </button>
-        <span class="filename-row">
-          <span class="filename" id="filename" title="">No file open</span>
-          <span id="dirty-hint" class="dirty-hint" hidden title="Edits are in memory only until Save is added">Unsaved changes</span>
-        </span>
-      </div>
-    </header>
-    <div id="toolbar-toast" class="toolbar-toast" role="status" hidden></div>
-
-    <div class="main">
-      <aside class="sidebar" aria-label="Document outline">
-        <h2 class="sidebar-heading">Outline</h2>
-        <div id="sidebar-message" class="sidebar-message" role="status">Open an HTML file to see the outline.</div>
-        <ul id="outline-list" class="outline-list"></ul>
-      </aside>
-
-      <main class="preview-area">
-        <div id="preview-error" class="preview-error" hidden></div>
-        <iframe
-          id="preview-frame"
-          class="preview-frame"
-          title="HTML preview"
-          sandbox="allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-presentation"
-        ></iframe>
-      </main>
-    </div>
-
-    <script src="export-document.js"></script>
-    <script src="renderer.js"></script>
+    <p>
+      Redirecting to the app under <a href="public/index.html">public/index.html</a> (run the dev server from the repo root, or open that file directly).
+    </p>
   </body>
 </html>

@@ -1,0 +1,474 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  color: #1a1a1a;
+  background: #f0f0f0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* `input[type=file]` with the `hidden` attribute often blocks programmatic .click() (Safari/Firefox); keep it off-screen instead. */
+.file-input-offscreen {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  background: #2c2c2c;
+  color: #f5f5f5;
+  border-bottom: 1px solid #1a1a1a;
+}
+
+.toolbar-toast {
+  flex-shrink: 0;
+  padding: 6px 16px;
+  font-size: 0.8125rem;
+  background: #3a3a3a;
+  color: #ffc107;
+  border-bottom: 1px solid #1a1a1a;
+}
+
+.toolbar-toast[hidden] {
+  display: none !important;
+}
+
+.toolbar-toast.is-error {
+  color: #ff8a80;
+}
+
+.toolbar-toast.is-success {
+  color: #a5d6a7;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.toolbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  color: #e0e0e0;
+  background: #3a3a3a;
+  border: 1px solid #555;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.btn-icon:hover {
+  background: #484848;
+  border-color: #666;
+  color: #fff;
+}
+
+.btn-icon:focus-visible {
+  outline: 2px solid #9ec5fe;
+  outline-offset: 2px;
+}
+
+/* Match .btn-primary: locked state & outline panel visible. */
+#btn-edit-lock[aria-pressed='true'],
+#btn-toggle-sidebar[aria-pressed='true'] {
+  color: #fff;
+  background: #0d6efd;
+  border-color: #0a58ca;
+}
+
+#btn-edit-lock[aria-pressed='true']:hover,
+#btn-toggle-sidebar[aria-pressed='true']:hover {
+  background: #0b5ed7;
+  border-color: #0a53be;
+  color: #fff;
+}
+
+.btn-icon-svg[hidden] {
+  display: none !important;
+}
+
+.btn-primary {
+  padding: 6px 14px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #fff;
+  background: #0d6efd;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  background: #0b5ed7;
+}
+
+.btn-primary:focus-visible {
+  outline: 2px solid #9ec5fe;
+  outline-offset: 2px;
+}
+
+.btn-secondary {
+  padding: 6px 12px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #e0e0e0;
+  background: #444;
+  border: 1px solid #555;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: #505050;
+  border-color: #666;
+}
+
+.btn-secondary:focus-visible {
+  outline: 2px solid #9ec5fe;
+  outline-offset: 1px;
+}
+
+.filename-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.filename {
+  font-size: 0.8125rem;
+  color: #ccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+
+.filename.is-dirty::before {
+  content: '* ';
+  color: #ffc107;
+  font-weight: 600;
+}
+
+.dirty-hint {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #ffc107;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.main.sidebar-hidden .sidebar {
+  display: none;
+}
+
+.sidebar {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #fafafa;
+  border-right: 1px solid #d8d8d8;
+  overflow: hidden;
+}
+
+.sidebar-heading {
+  margin: 0;
+  padding: 12px 14px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #555;
+}
+
+.sidebar-message {
+  padding: 0 14px 8px;
+  font-size: 0.8125rem;
+  color: #666;
+  line-height: 1.4;
+}
+
+.sidebar-message.is-error {
+  color: #b02a37;
+}
+
+.outline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.outline-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  color: #222;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.outline-item:hover {
+  border-color: #0d6efd;
+  background: #f0f7ff;
+}
+
+.outline-item:focus-visible {
+  outline: 2px solid #0d6efd;
+  outline-offset: 1px;
+}
+
+.outline-item.active {
+  border-color: #0d6efd;
+  background: #e7f1ff;
+  box-shadow: inset 0 0 0 1px rgba(13, 110, 253, 0.35);
+}
+
+.outline-item-tag {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+.outline-item-preview {
+  display: block;
+  color: #111;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outline-item--h1 {
+  padding-left: 10px;
+}
+
+.outline-item--h2 {
+  padding-left: 18px;
+}
+
+.outline-item--h3 {
+  padding-left: 26px;
+}
+
+.outline-item--h4 {
+  padding-left: 12px;
+  font-weight: 500;
+}
+
+.outline-item--h5 {
+  padding-left: 34px;
+  font-weight: 500;
+}
+
+.outline-item--h6 {
+  padding-left: 42px;
+  font-weight: 500;
+  opacity: 0.92;
+}
+
+.preview-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #e8e8e8;
+  position: relative;
+  transition: box-shadow 0.22s ease, background-color 0.22s ease;
+}
+
+/* Open-file mode: center panel is the only drop/click surface (no extra chrome above). */
+.preview-area.preview-area--open-mode .preview-frame {
+  pointer-events: none;
+}
+
+.preview-area.preview-area--open-mode:not(.preview-area--dragover) {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.preview-open-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  background: linear-gradient(165deg, rgba(240, 240, 240, 0.97) 0%, rgba(228, 228, 228, 0.98) 100%);
+  border: 2px dashed rgba(90, 90, 90, 0.45);
+  margin: 10px;
+  border-radius: 8px;
+  box-sizing: border-box;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.22s ease,
+    transform 0.22s ease;
+}
+
+.preview-open-surface[hidden] {
+  display: none !important;
+}
+
+.preview-open-content {
+  max-width: 22rem;
+  pointer-events: none;
+}
+
+.preview-open-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+  line-height: 0;
+  opacity: 0.95;
+}
+
+.preview-open-icon img {
+  display: block;
+  width: 96px;
+  height: 96px;
+  color:#111
+}
+
+.preview-open-title {
+  margin: 0 0 8px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #333;
+}
+
+.preview-open-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #666;
+}
+
+.preview-area.preview-area--dragover .preview-open-surface {
+  border-color: #0d6efd;
+  background: linear-gradient(165deg, rgba(232, 242, 255, 0.98) 0%, rgba(220, 235, 255, 0.99) 100%);
+  box-shadow:
+    0 0 0 3px rgba(13, 110, 253, 0.2),
+    inset 0 0 40px rgba(13, 110, 253, 0.08);
+  transform: scale(1.008);
+}
+
+/* Brief affirmation after a successful load (paired with toolbar toast). */
+.preview-area.preview-area--loaded-flash {
+  box-shadow: inset 0 0 0 2px rgba(76, 175, 80, 0.45);
+}
+
+.preview-error {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 4;
+  padding: 12px 14px;
+  background: #f8d7da;
+  color: #842029;
+  border: 1px solid #f5c2c7;
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.preview-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: none;
+  background: #fff;
+}
+
+/* Main window: browser Print hides app chrome (Export PDF uses a separate document). */
+@media print {
+  .toolbar,
+  .toolbar-toast,
+  .sidebar {
+    display: none !important;
+  }
+
+  .preview-open-surface {
+    display: none !important;
+  }
+
+  .preview-error {
+    display: none !important;
+  }
+
+  .main {
+    display: block;
+  }
+
+  .preview-area {
+    flex: none;
+    min-height: auto;
+    background: #fff !important;
+  }
+}

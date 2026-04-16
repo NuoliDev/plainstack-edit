@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Shell loads only same-origin scripts; preview iframe (srcdoc) needs inline + file: for local HTML. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' file: data: blob:; style-src 'self' 'unsafe-inline' file: blob:; img-src 'self' data: blob: file:; font-src 'self' data: blob: file:; media-src 'self' file: data: blob:; connect-src 'self' file: data: blob: http: https: ws: wss:; worker-src 'self' blob: data:; frame-src 'self' file: data: blob: http: https:;"
+    />
+    <!-- Shell v2: no static dropzone; open mode uses preview panel (see renderer.js). -->
+    <title>Plainstack - an html editor</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <h1 class="app-title">Plainstack - an html editor</h1>
+      <div class="toolbar-actions">
+        <button type="button" id="btn-open" class="btn-primary">Open HTML</button>
+        <button type="button" id="btn-save" class="btn-secondary">Save</button>
+        <button type="button" id="btn-save-as" class="btn-secondary">Save As</button>
+        <button
+          type="button"
+          id="btn-export-pdf"
+          class="btn-secondary"
+          title="Export as PDF (print mode: fixed desktop layout, document only)"
+        >
+          Export PDF
+        </button>
+        <span class="filename-row">
+          <span class="filename" id="filename" title="">No file open</span>
+          <span id="dirty-hint" class="dirty-hint" hidden title="Edits are in memory only until Save is added">Unsaved changes</span>
+        </span>
+        <div class="toolbar-tools" role="group" aria-label="Editor view">
+          <button
+            type="button"
+            id="btn-edit-lock"
+            class="btn-icon"
+            title="Lock editing"
+            aria-label="Lock editing"
+            aria-pressed="false"
+          >
+            <svg class="btn-icon-svg btn-icon-lock-open" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                fill="currentColor"
+                d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-1 10H7V10h10v10z"
+              />
+            </svg>
+            <svg class="btn-icon-svg btn-icon-lock-closed" width="22" height="22" viewBox="0 0 24 24" hidden aria-hidden="true" focusable="false">
+              <path
+                fill="currentColor"
+                d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            id="btn-toggle-sidebar"
+            class="btn-icon"
+            title="Hide outline panel"
+            aria-label="Toggle outline panel"
+            aria-pressed="true"
+          >
+            <svg class="btn-icon-svg btn-icon-eye" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                fill="currentColor"
+                d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"
+              />
+            </svg>
+            <svg class="btn-icon-svg btn-icon-eye-off" width="22" height="22" viewBox="0 0 24 24" hidden aria-hidden="true" focusable="false">
+              <path
+                fill="currentColor"
+                d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78 3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+    <div id="toolbar-toast" class="toolbar-toast" role="status" hidden></div>
+
+    <div class="main">
+      <aside id="sidebar-outline" class="sidebar" aria-label="Document outline">
+        <h2 class="sidebar-heading">Outline</h2>
+        <div id="sidebar-message" class="sidebar-message" role="status">Open an HTML file to see the outline.</div>
+        <ul id="outline-list" class="outline-list"></ul>
+      </aside>
+
+      <main id="preview-area" class="preview-area">
+        <div id="preview-error" class="preview-error" hidden></div>
+        <!-- Shown only after "Open HTML": same panel becomes the drop / click target (no separate strip above). -->
+        <div
+          id="preview-open-surface"
+          class="preview-open-surface"
+          hidden
+          aria-hidden="true"
+        >
+          <div class="preview-open-content">
+            <div class="preview-open-icon" aria-hidden="true">
+              <img
+                src="icons/upload_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+                width="48"
+                height="48"
+                alt=""
+                decoding="async"
+              />
+            </div>
+            <p class="preview-open-title">Drag and drop an HTML file here</p>
+            <p class="preview-open-hint">or click to choose file</p>
+          </div>
+        </div>
+        <iframe
+          id="preview-frame"
+          class="preview-frame"
+          title="HTML preview"
+          sandbox="allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-presentation"
+        ></iframe>
+      </main>
+    </div>
+
+    <input
+      type="file"
+      id="file-input-html"
+      class="file-input-offscreen"
+      accept=".html,.htm,text/html"
+      tabindex="-1"
+      aria-hidden="true"
+    />
+
+    <script src="export-document.js"></script>
+    <script src="renderer.js?v=7"></script>
+  </body>
+</html>
