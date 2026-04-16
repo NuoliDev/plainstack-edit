@@ -7,7 +7,9 @@ Human-readable overview for tools and collaborators. Describes structure, data s
 ## What this app is
 
 - **Name:** HTML Text Editor Preview  
-- **Stack:** Electron, plain JavaScript (no framework), minimal HTML/CSS.  
+- **Stack:** Plain JavaScript (no framework), minimal HTML/CSS. **Two deployments:**  
+  - **Electron** — local file open/save, **IPC** to `main.js`, **`window.electronAPI`**.  
+  - **Browser / Firebase Hosting** — same **`public/renderer.js`** shell; **`file` input + drag/drop** to open; **Blob download** for Save / Save As; **Export PDF** stubbed (no Electron IPC). Feature detection: **`window.electronAPI`** present → Electron paths; absent → browser paths.  
 - **Sprint 1:** Open one local `.html` file, preview in an **iframe** (`srcdoc`), **parse** the same HTML with **`DOMParser`** (working document), **outline** in the **sidebar**, **scroll** to outline targets in the live preview.  
 - **Sprint 2:** **Safe inline text editing** on approved elements only; **`data-editor-id`** maps live iframe nodes to **`workingDom`**; **plain-text paste**; **Escape** cancels; **blur** or **Enter** commits; **dirty** state.  
 - **Sprint 3:** **Save** and **Save As** write **`serializeHtmlDocument(workingDom)`** to disk via IPC; **`currentFilePath`** tracks the open/saved file; dirty clears only after a successful write.  
@@ -22,11 +24,38 @@ Human-readable overview for tools and collaborators. Describes structure, data s
 | `package.json` | `npm start` runs `electron .`; `main` is `main.js`. |
 | `main.js` | Electron main process: window, `open-html-file`, `save-html-file`, `save-html-file-as`, **`export-html-to-pdf`** (temp file + hidden window + `printToPDF`). |
 | `preload.js` | `contextBridge.exposeInMainWorld('electronAPI', { openHtmlFile, filePathToBaseHref, saveHtmlFile, saveHtmlFileAs, **`exportHtmlToPdf`** })`. |
-| `index.html` | Shell UI: toolbar, sidebar, preview iframe, dirty hint, **Export PDF** button. |
-| `styles.css` | Split layout (toolbar / sidebar / preview); **`@media print`** rules hide shell chrome if the user prints the **main** window (Export PDF uses a **separate** document). |
-| `export-document.js` | **`stripEditorIdsFromSerializedHtml(serializedHtml)`** — string-only removal of `data-editor-id` (no `DOMParser` round-trip; preserves markup fidelity). |
-| `export-print.css` | Injected **only** into the temp export HTML: **`html.print-mode`** print layout (fixed canvas, outer 3-column grids, inner card/stack rules). Not loaded by the live editor. |
-| `renderer.js` | Open/save file, parse DOM, stamp `data-editor-id`, outline, iframe sync, inline edit, **Export PDF** handler. |
+| `public/index.html` | **Hosted** shell: toolbar (incl. lock + outline visibility toggles, open-mode preview), sidebar, preview iframe, hidden file input. |
+| `public/styles.css` | Split layout (toolbar / sidebar / preview); **`@media print`** rules hide shell chrome if the user prints the **main** window (Export PDF uses a **separate** document). |
+| `public/export-document.js` | **`stripEditorIdsFromSerializedHtml(serializedHtml)`** — string-only removal of `data-editor-id` (no `DOMParser` round-trip; preserves markup fidelity). |
+| `public/export-print.css` | Injected **only** into the temp export HTML: **`html.print-mode`** print layout (fixed canvas, outer 3-column grids, inner card/stack rules). Not loaded by the live editor. |
+| `public/renderer.js` | **Single renderer** for Electron + browser: open/save, **loose-text normalization** (see **Update** below), **`stampEditorIds`**, canonical outline, iframe sync, inline edit, lock/sidebar UI, **Export PDF** handler (Electron only). |
+| `firebase.json` | Hosting **`public/`** as site root; optional cache headers. |
+
+---
+
+## Update: all visible text under `data-editor-id` (loose-text normalization)
+
+**Problem:** Plainstack only treats nodes that carry **`data-editor-id`** as editable. Author HTML often mixes **stamped** inline elements with **raw text nodes** in the same parent (e.g. `<div class="highlight"><span data-editor-id="ed-3">One number.</span> One place for your health.</div>`). The trailing sentence is **not** inside any `[data-editor-id]` element, so it never becomes editable.
+
+**Pipeline (runs on `loadHtmlIntoApp` after `DOMParser`, before `stampEditorIds`):**
+
+1. **`wrapUnhostedVisibleText(doc)`**  
+   - Tree-walks **`document.body`** (skips `script`, `style`, `noscript`, `template`, SVG, `textarea`).  
+   - For each **visible** text node (contains at least one non-whitespace character, `\S`), if **no ancestor** has **`data-editor-id`**, wraps that text in **`<span data-editor-id="ed-N">…</span>`** with **exact** string preservation (`textContent` = original text node data).  
+   - **New IDs:** `N` = **`max(existing numeric `ed-\d+` in document) + 1`**, incrementing for each wrap; **does not** overwrite or remove author IDs.  
+   - **Audit:** `lastDomTextWrapAudit` lists each fix (`assignedId`, `parentTag`, `parentSelectorHint`, `textPreview`); **`console.info`** when non-empty; **`window.__htmlPreviewDebug.getLastDomTextWrapAudit()`**.
+
+2. **`stampEditorIds(doc)` (revised)**  
+   - **Preserves** any existing **`data-editor-id`** on an element.  
+   - Assigns **`ed-M`** only to **`isEditableElement`** nodes that **still lack** an id **and** are not fully redundant: **if** every visible text node in the subtree already sits under a descendant **`[data-editor-id]`** (e.g. `<p><span data-editor-id>…</span></p>` after wrap), **skip** stamping the outer block so one edit surface does not duplicate the child.  
+   - Next free **`M`** continues after **`getMaxNumericEditorIndex(doc)`** (numeric **`ed-*`** only).
+
+3. **`verifyAllVisibleTextUnderEditorHost(doc)`**  
+   - After stamp, asserts every **visible** text node has an ancestor with **`data-editor-id`**. Failures **`console.warn`** with short snippets (should be empty in normal operation).
+
+**Outcome:** Mixed lines split into **separate** wrapped spans where needed; links, classes, and inline emphasis **outside** those raw segments remain unchanged; layout stays **inline**-friendly (`span` in block containers). Serialized HTML (**`serializeHtmlDocument(workingDom)`**) is the **updated** document with new ids.
+
+**Debug:** **`window.__htmlPreviewDebug.verifyTextCoverage()`** runs the verifier on **`workingDom`**.
 
 ---
 
@@ -94,7 +123,7 @@ Minimal rules only: **`@page` Letter landscape + margins**, **`html`/`body`** fu
 1. **`workingDom`** — `Document` from `DOMParser`. **Authoritative** for outline metadata and **post-commit** serialization (`lastHtml`).  
 2. **Live preview** — `iframe.contentDocument` after `srcdoc` load. User **edits** here.
 
-**Stable mapping (recommended approach):** Mutate the **working `Document` first** — stamp every approved editable element in **tree (preorder) order** with `data-editor-id="ed-0"`, `ed-1`, … — then **`serializeHtmlDocument(workingDom)`** once and assign that string to **`iframe.srcdoc`**. The preview DOM is parsed from that string, so **working DOM and iframe DOM get the same tags without separately walking the iframe**. Do **not** stamp the iframe after load as a second source of truth.
+**Stable mapping (recommended approach):** Mutate the **working `Document` first** — **`wrapUnhostedVisibleText`** (see **Update** above), then **`stampEditorIds`** so every approved editable (or child-only coverage) has **`data-editor-id`** — then **`serializeHtmlDocument(workingDom)`** once and assign that string to **`iframe.srcdoc`**. The preview DOM is parsed from that string, so **working DOM and iframe DOM get the same tags without separately walking the iframe**. Do **not** stamp the iframe after load as a second source of truth.
 
 **On commit:** `syncLiveEditToWorkingDom(editorId, newText)` sets **`textContent`** on `[data-editor-id="…"]` in **`workingDom`** only (no `outerHTML` replacement, no attribute changes). Then `lastHtml = serializeHtmlDocument(workingDom)`.
 
@@ -122,7 +151,7 @@ Minimal rules only: **`@page` Letter landscape + margins**, **`html`/`body`** fu
 
 **Outline UI:** Each row **`button[data-editor-id="…"]`** matches the content id. **`.active`** = **`activeOutlineEditorId`**. Headings **h1–h3** use stronger indent classes; **h4–h6** use **`outline-item--h4`**.
 
-**span/div (real-world HTML):** Additional **`isLikelyTextHolderSpanOrDiv`** heuristics: non-empty text, limited subtree size, phrasing-only descendants, no structural block descendants, delegation when a single child is another text-holder or `a`/`button`/`label`.
+**span/div (real-world HTML):** Additional **`isLikelyTextHolderSpanOrDiv`** heuristics: non-empty text, limited subtree size, phrasing-only descendants, no structural block descendants, delegation when a single child is another text-holder or `a`/`button`/`label`. **Loose text** next to existing stamped nodes is wrapped in **`<span data-editor-id>`** on load (see **Update: all visible text under `data-editor-id`**).
 
 **Toolbar:** **Save** writes to **`currentFilePath`** (or **Save As** if no path). **Save As** picks a path and updates **`currentFilePath`** and preview **`<base>`** when the file moves.
 
@@ -155,10 +184,12 @@ Minimal rules only: **`@page` Letter landscape + margins**, **`html`/`body`** fu
 ## Debug hook (`window.__htmlPreviewDebug`)
 
 - `getWorkingDom`, `getLastHtml`, `getCanonicalEditableItems`, `getResolvedBaseHref`, `getCurrentFilePath`, `getDirty`, `getActiveEditElement`, `getActiveOutlineEditorId`  
+- **`getLastDomTextWrapAudit`** — entries for each loose-text wrap from the last load.  
+- **`verifyTextCoverage`** — `{ ok, failures }` for whether every visible text node sits under **`[data-editor-id]`**.  
 - `syncLiveEditToWorkingDom`, `rebuildOutline` (for tests)
 
 ---
 
 ## Version note
 
-This file describes **Sprint 3** as implemented, including **Export PDF** and **print-mode** layout. Update when changing IPC contracts, persistence behavior, or export/print pipeline.
+This file describes **Sprint 3** as implemented, including **Export PDF** and **print-mode** layout, **Firebase/browser** hosting alongside Electron, **shell** controls (lock editing, outline visibility, open-mode preview), and **loose-text normalization** so displayed copy can be edited consistently. Update when changing IPC contracts, persistence behavior, export/print pipeline, or the wrap/stamp/verify pipeline.
