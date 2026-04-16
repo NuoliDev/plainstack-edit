@@ -1,6 +1,7 @@
 /**
  * HTML Text Editor Preview — renderer (Sprint 3)
  * Open/save HTML, preview in iframe (srcdoc), workingDom, inline edit, canonical sidebar.
+ * Same file serves Electron (window.electronAPI) and browser/Firebase (file input + download).
  */
 
 /** @typedef {{ id: string, editorId: string, tagName: string, textPreview: string, headingLevel?: number, path: string, containerHint?: string }} EditableMeta */
@@ -125,6 +126,10 @@ const EDITOR_ID_ATTR = 'data-editor-id';
 const EDITOR_ID_PREFIX = 'ed-';
 
 const el = (id) => document.getElementById(id);
+
+const previewArea = el('preview-area');
+const previewOpenSurface = el('preview-open-surface');
+const fileInputBrowser = el('file-input-html');
 
 function truncate(s, max = MAX_PREVIEW_LEN) {
   const t = s.replace(/\s+/g, ' ').trim();
@@ -254,12 +259,158 @@ function getContainerHint(node) {
 }
 
 /**
+ * Highest numeric suffix among `data-editor-id="ed-N"` (N integer). Returns -1 if none.
  * @param {Document} doc
- * @returns {number} count stamped
+ */
+function getMaxNumericEditorIndex(doc) {
+  let max = -1;
+  doc.querySelectorAll(`[${EDITOR_ID_ATTR}]`).forEach((el) => {
+    const v = el.getAttribute(EDITOR_ID_ATTR) || '';
+    const m = new RegExp(`^${EDITOR_ID_PREFIX}(\\d+)$`).exec(v);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  });
+  return max;
+}
+
+/**
+ * True if this text node has an ancestor element carrying `data-editor-id`.
+ * @param {Text} textNode
+ */
+function isTextNodeInsideEditorHost(textNode) {
+  let el = textNode.parentElement;
+  while (el) {
+    if (el.hasAttribute(EDITOR_ID_ATTR)) return true;
+    el = el.parentElement;
+  }
+  return false;
+}
+
+/**
+ * True when every visible (non-whitespace-only) text node in the subtree sits under some [data-editor-id] ancestor.
+ * @param {Element} rootEl
+ */
+function subtreeTextFullyUnderEditorHosts(rootEl) {
+  const doc = rootEl.ownerDocument;
+  if (!doc) return false;
+  let sawVisible = false;
+  const tw = doc.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const p = node.parentElement;
+      if (!p || !rootEl.contains(p)) return NodeFilter.FILTER_REJECT;
+      const t = p.tagName.toLowerCase();
+      if (t === 'script' || t === 'style' || t === 'noscript' || t === 'template') return NodeFilter.FILTER_REJECT;
+      if (p.closest && p.closest('svg')) return NodeFilter.FILTER_REJECT;
+      if (t === 'textarea') return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  while (tw.nextNode()) {
+    const tn = tw.currentNode;
+    if (!tn.data || !/\S/.test(tn.data)) continue;
+    sawVisible = true;
+    if (!isTextNodeInsideEditorHost(tn)) return false;
+  }
+  return sawVisible;
+}
+
+/**
+ * Wrap visible text not under any [data-editor-id] in `<span data-editor-id="ed-N">…</span>`.
+ * Preserves existing IDs; new N continues after max existing numeric id. Does not wrap whitespace-only nodes.
+ * @param {Document} doc
+ * @returns {Array<{ assignedId: string, parentTag: string, parentSelectorHint: string, textPreview: string }>}
+ */
+function wrapUnhostedVisibleText(doc) {
+  /** @type {Array<{ assignedId: string, parentTag: string, parentSelectorHint: string, textPreview: string }>} */
+  const audit = [];
+  if (!doc.body) return audit;
+
+  let next = getMaxNumericEditorIndex(doc) + 1;
+  /** @type {Text[]} */
+  const batch = [];
+  const tw = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const p = node.parentElement;
+      if (!p) return NodeFilter.FILTER_REJECT;
+      const t = p.tagName.toLowerCase();
+      if (t === 'script' || t === 'style' || t === 'noscript' || t === 'template') return NodeFilter.FILTER_REJECT;
+      if (p.closest && p.closest('svg')) return NodeFilter.FILTER_REJECT;
+      if (t === 'textarea') return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  while (tw.nextNode()) batch.push(/** @type {Text} */ (tw.currentNode));
+
+  for (const textNode of batch) {
+    const raw = textNode.data;
+    if (!raw || !/\S/.test(raw)) continue;
+    if (isTextNodeInsideEditorHost(textNode)) continue;
+
+    const parent = textNode.parentElement;
+    if (!parent) continue;
+
+    const id = `${EDITOR_ID_PREFIX}${next}`;
+    next += 1;
+
+    audit.push({
+      assignedId: id,
+      parentTag: parent.tagName.toLowerCase(),
+      parentSelectorHint: buildSelectorPath(parent),
+      textPreview: truncate(raw.replace(/\s+/g, ' ').trim(), 80),
+    });
+
+    const span = doc.createElement('span');
+    span.setAttribute(EDITOR_ID_ATTR, id);
+    const preserved = textNode.data;
+    parent.replaceChild(span, textNode);
+    span.textContent = preserved;
+  }
+
+  return audit;
+}
+
+/**
+ * Post-condition check: every visible text node lies under a [data-editor-id] ancestor.
+ * @param {Document} doc
+ */
+function verifyAllVisibleTextUnderEditorHost(doc) {
+  /** @type {Array<{ textPreview: string, parentTag: string }>} */
+  const failures = [];
+  if (!doc.body) return { ok: true, failures };
+
+  const tw = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const p = node.parentElement;
+      if (!p) return NodeFilter.FILTER_REJECT;
+      const t = p.tagName.toLowerCase();
+      if (t === 'script' || t === 'style' || t === 'noscript' || t === 'template') return NodeFilter.FILTER_REJECT;
+      if (p.closest && p.closest('svg')) return NodeFilter.FILTER_REJECT;
+      if (t === 'textarea') return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  while (tw.nextNode()) {
+    const tn = tw.currentNode;
+    if (!tn.data || !/\S/.test(tn.data)) continue;
+    if (!isTextNodeInsideEditorHost(tn)) {
+      failures.push({
+        textPreview: truncate((tn.data || '').replace(/\s+/g, ' ').trim(), 80),
+        parentTag: tn.parentElement ? tn.parentElement.tagName.toLowerCase() : '?',
+      });
+    }
+  }
+  return { ok: failures.length === 0, failures };
+}
+
+/**
+ * Preserves existing `data-editor-id`; assigns only to editables that lack one and still have unhosted text.
+ * Skips stamping a container when all visible text in its subtree is already under descendant [data-editor-id].
+ * @param {Document} doc
+ * @returns {number} next id ceiling (exclusive)
  */
 function stampEditorIds(doc) {
   if (!doc.body) return 0;
-  let n = 0;
+  let n = getMaxNumericEditorIndex(doc) + 1;
+
   const walk = (node) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const element = /** @type {Element} */ (node);
@@ -268,8 +419,14 @@ function stampEditorIds(doc) {
     if (tag === 'svg' || isInsideSvg(element)) return;
 
     if (isEditableElement(element)) {
-      element.setAttribute(EDITOR_ID_ATTR, `${EDITOR_ID_PREFIX}${n}`);
-      n += 1;
+      if (!element.hasAttribute(EDITOR_ID_ATTR)) {
+        if (subtreeTextFullyUnderEditorHosts(element)) {
+          /* e.g. <p><span data-editor-id>…</span></p> — editable text only in children */
+        } else {
+          element.setAttribute(EDITOR_ID_ATTR, `${EDITOR_ID_PREFIX}${n}`);
+          n += 1;
+        }
+      }
     }
     for (const child of element.children) {
       walk(child);
@@ -436,6 +593,18 @@ let documentDirty = false;
 /** @type {number | undefined} */
 let saveToastTimer;
 
+/** @type {number | undefined} */
+let loadedFlashTimer;
+
+/** Browser hosting: open-file overlay on the preview panel (no Electron dialog). */
+let openFileModeActive = false;
+
+/** When true, inline editing and outline→edit are disabled (preview is read-only). */
+let editingLocked = false;
+
+/** Locations where loose text was wrapped before the last stamp (see wrapUnhostedVisibleText). */
+let lastDomTextWrapAudit = [];
+
 function syncLiveEditToWorkingDom(editorId, newText) {
   if (!workingDom) return;
   const safeId = editorId.replace(/[^a-zA-Z0-9_-]/g, '');
@@ -518,6 +687,7 @@ function beginInlineEdit(element) {
   if (!element || element.nodeType !== Node.ELEMENT_NODE) return;
   if (!element.getAttribute(EDITOR_ID_ATTR)) return;
   if (!isEditableElement(element)) return;
+  if (editingLocked) return;
 
   const eid = element.getAttribute(EDITOR_ID_ATTR);
   if (eid) setActiveOutlineEditorId(eid);
@@ -600,6 +770,7 @@ function attachPreviewEditListeners(frame) {
   const idoc = frame.contentDocument;
   if (!idoc) return;
   injectPreviewEditStyles(idoc);
+  syncPreviewLockClass();
 
   idoc.addEventListener(
     'click',
@@ -611,6 +782,7 @@ function attachPreviewEditListeners(frame) {
       const block = /** @type {Element} */ (start).closest(`[${EDITOR_ID_ATTR}]`);
       if (!block || !isEditableElement(block)) return;
       if (activeEditEl === block) return;
+      if (editingLocked) return;
 
       e.preventDefault();
       e.stopPropagation();
@@ -679,8 +851,27 @@ function injectPreviewEditStyles(idoc) {
       outline: 2px solid #0d6efd;
       outline-offset: 2px;
     }
+    body.plainstack-edit-locked [${EDITOR_ID_ATTR}] {
+      cursor: default !important;
+    }
+    body.plainstack-edit-locked [${EDITOR_ID_ATTR}]:hover:not(.preview-editing) {
+      outline: none !important;
+    }
   `;
   idoc.head.appendChild(s);
+}
+
+function syncPreviewLockClass() {
+  const frame = /** @type {HTMLIFrameElement} */ (el('preview-frame'));
+  let idoc;
+  try {
+    idoc = frame?.contentDocument;
+  } catch {
+    return;
+  }
+  if (idoc?.body) {
+    idoc.body.classList.toggle('plainstack-edit-locked', editingLocked);
+  }
 }
 
 function setSidebarMessage(text, isError = false) {
@@ -700,7 +891,7 @@ function setPreviewError(message) {
   err.textContent = message;
 }
 
-function showToolbarToast(message, isError = false) {
+function showToolbarToast(message, isError = false, success = false) {
   const t = el('toolbar-toast');
   if (!t) return;
   if (saveToastTimer !== undefined) {
@@ -708,10 +899,11 @@ function showToolbarToast(message, isError = false) {
   }
   t.textContent = message;
   t.classList.toggle('is-error', isError);
+  t.classList.toggle('is-success', success && !isError);
   t.hidden = false;
   saveToastTimer = window.setTimeout(() => {
     t.hidden = true;
-    t.classList.remove('is-error');
+    t.classList.remove('is-error', 'is-success');
     saveToastTimer = undefined;
   }, 3200);
 }
@@ -756,17 +948,37 @@ function applySavedPathAndRefreshPreview(newPath) {
     fn.title = newPath;
   }
   const api = window.electronAPI;
-  lastResolvedBaseHref = api?.filePathToBaseHref ? api.filePathToBaseHref(newPath) : fallbackFilePathToBaseHref(newPath);
-  if (workingDom) {
-    insertBaseAtHeadStart(workingDom, lastResolvedBaseHref);
-    refreshIframeFromWorkingDom();
+  if (api?.filePathToBaseHref) {
+    lastResolvedBaseHref = api.filePathToBaseHref(newPath);
+    if (workingDom) {
+      insertBaseAtHeadStart(workingDom, lastResolvedBaseHref);
+      refreshIframeFromWorkingDom();
+    }
+  } else {
+    lastResolvedBaseHref = '';
+    if (workingDom) {
+      refreshIframeFromWorkingDom();
+    }
   }
 }
 
 async function onSaveClick() {
   const api = window.electronAPI;
   if (!api?.saveHtmlFile) {
-    showToolbarToast('Save is not available.', true);
+    if (!workingDom) {
+      showToolbarToast('Nothing to save.', true);
+      return;
+    }
+    if (!currentFilePath) {
+      await onSaveAsClick();
+      return;
+    }
+    flushActiveEditToWorkingDom();
+    const html = serializeHtmlDocument(workingDom);
+    downloadHtmlBlob(pathBasename(currentFilePath), html);
+    lastHtml = html;
+    setDirty(false);
+    showToolbarToast('Saved');
     return;
   }
   if (!workingDom) {
@@ -792,7 +1004,20 @@ async function onSaveClick() {
 async function onSaveAsClick() {
   const api = window.electronAPI;
   if (!api?.saveHtmlFileAs) {
-    showToolbarToast('Save As is not available.', true);
+    if (!workingDom) {
+      showToolbarToast('Nothing to save.', true);
+      return;
+    }
+    flushActiveEditToWorkingDom();
+    const html = serializeHtmlDocument(workingDom);
+    const defaultName = currentFilePath ? pathBasename(currentFilePath) : 'document.html';
+    const name = prompt('Save as filename:', defaultName);
+    if (!name) return;
+    downloadHtmlBlob(name, html);
+    applySavedPathAndRefreshPreview(name);
+    lastHtml = html;
+    setDirty(false);
+    showToolbarToast('Saved');
     return;
   }
   if (!workingDom) {
@@ -906,7 +1131,9 @@ function onOutlineRowClick(editorId) {
   } catch {
     /* cross-origin shouldn't happen with srcdoc */
   }
-  beginInlineEdit(target);
+  if (!editingLocked) {
+    beginInlineEdit(target);
+  }
 }
 
 function loadHtmlIntoApp(html, filePath = null) {
@@ -918,8 +1145,8 @@ function loadHtmlIntoApp(html, filePath = null) {
   lastResolvedBaseHref = '';
   let htmlForPreview = html;
   const api = window.electronAPI;
-  if (filePath) {
-    const baseHref = api?.filePathToBaseHref ? api.filePathToBaseHref(filePath) : fallbackFilePathToBaseHref(filePath);
+  if (filePath && api?.filePathToBaseHref) {
+    const baseHref = api.filePathToBaseHref(filePath);
     lastResolvedBaseHref = baseHref;
     htmlForPreview = injectBaseIntoHtml(html, baseHref);
   }
@@ -934,16 +1161,29 @@ function loadHtmlIntoApp(html, filePath = null) {
     lastResolvedBaseHref = '';
     currentFilePath = null;
     renderCanonicalSidebar([]);
+    setPreviewLoadedState(false);
     return;
   }
 
+  lastDomTextWrapAudit = wrapUnhostedVisibleText(parsed);
+  if (lastDomTextWrapAudit.length) {
+    console.info('[plainstack] Wrapped loose text (outside [data-editor-id]):', lastDomTextWrapAudit);
+  }
   stampEditorIds(parsed);
+  const coverage = verifyAllVisibleTextUnderEditorHost(parsed);
+  if (!coverage.ok) {
+    console.warn('[plainstack] Text nodes still outside [data-editor-id] after normalize:', coverage.failures);
+  }
+
   workingDom = parsed;
   currentFilePath = filePath || null;
   lastHtml = serializeHtmlDocument(parsed);
 
   const { items } = buildCanonicalEditableModel(parsed);
   lastCanonicalEditableItems = items;
+
+  editingLocked = true;
+  updateLockButtonUi();
 
   const frame = /** @type {HTMLIFrameElement} */ (el('preview-frame'));
   frame.removeAttribute('srcdoc');
@@ -953,17 +1193,13 @@ function loadHtmlIntoApp(html, filePath = null) {
     const idoc = frame.contentDocument;
     if (!idoc) return;
 
-    const scriptCount = idoc.querySelectorAll('script').length;
-    console.log('[preview] iframe loaded');
-    console.log('[preview] script tags present:', scriptCount > 0, `count=${scriptCount}`);
-    console.log('[preview] resolved base href:', lastResolvedBaseHref || '(none)');
-
     renderCanonicalSidebar(items);
     attachPreviewEditListeners(frame);
+    setPreviewLoadedState(true);
   };
 }
 
-async function onOpenClick() {
+async function onOpenClickElectron() {
   const api = window.electronAPI;
   if (!api?.openHtmlFile) {
     setPreviewError('Preload bridge missing. Cannot open files.');
@@ -1008,7 +1244,136 @@ function pathBasename(p) {
   return parts[parts.length - 1] || p;
 }
 
-el('btn-open').addEventListener('click', onOpenClick);
+function downloadHtmlBlob(filename, html) {
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'document.html';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function flashPreviewLoaded() {
+  if (!previewArea) return;
+  previewArea.classList.add('preview-area--loaded-flash');
+  clearTimeout(loadedFlashTimer);
+  loadedFlashTimer = window.setTimeout(() => {
+    previewArea.classList.remove('preview-area--loaded-flash');
+  }, 650);
+}
+
+function setPreviewLoadedState(hasDoc) {
+  if (!previewArea) return;
+  previewArea.classList.toggle('preview-area--loaded', Boolean(hasDoc));
+}
+
+function enterOpenFileMode() {
+  openFileModeActive = true;
+  if (previewArea) previewArea.classList.add('preview-area--open-mode');
+  if (previewOpenSurface) {
+    previewOpenSurface.hidden = false;
+    previewOpenSurface.setAttribute('aria-hidden', 'false');
+  }
+  setPreviewError('');
+}
+
+function exitOpenFileMode() {
+  openFileModeActive = false;
+  if (previewArea) {
+    previewArea.classList.remove('preview-area--open-mode', 'preview-area--dragover');
+  }
+  if (previewOpenSurface) {
+    previewOpenSurface.hidden = true;
+    previewOpenSurface.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function toggleOpenFileMode() {
+  if (openFileModeActive) exitOpenFileMode();
+  else enterOpenFileMode();
+}
+
+async function handleBrowserFile(file) {
+  if (!file) return;
+
+  const name = file.name || 'document.html';
+  const lower = name.toLowerCase();
+  const isHtml =
+    file.type === 'text/html' || lower.endsWith('.html') || lower.endsWith('.htm');
+
+  if (!isHtml) {
+    setPreviewError('Please choose an HTML file (.html or .htm).');
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    el('filename').textContent = name;
+    el('filename').title = name;
+    loadHtmlIntoApp(text, name);
+    exitOpenFileMode();
+    showToolbarToast('HTML loaded', false, true);
+    flashPreviewLoaded();
+  } catch {
+    setPreviewError('Failed to read file.');
+  }
+}
+
+function initBrowserOpenUi() {
+  previewOpenSurface?.addEventListener('click', () => {
+    if (!openFileModeActive) return;
+    fileInputBrowser?.click();
+  });
+
+  fileInputBrowser?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    await handleBrowserFile(file);
+    if (fileInputBrowser) fileInputBrowser.value = '';
+  });
+
+  previewArea?.addEventListener('dragenter', (e) => {
+    if (!openFileModeActive) return;
+    e.preventDefault();
+    e.stopPropagation();
+    previewArea.classList.add('preview-area--dragover');
+  });
+
+  previewArea?.addEventListener('dragleave', (e) => {
+    if (!openFileModeActive) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const next = e.relatedTarget;
+    if (next && previewArea.contains(next)) return;
+    previewArea.classList.remove('preview-area--dragover');
+  });
+
+  previewArea?.addEventListener('dragover', (e) => {
+    if (!openFileModeActive) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+
+  previewArea?.addEventListener('drop', async (e) => {
+    if (!openFileModeActive) return;
+    e.preventDefault();
+    e.stopPropagation();
+    previewArea.classList.remove('preview-area--dragover');
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    await handleBrowserFile(files[0]);
+  });
+}
+
+if (window.electronAPI?.openHtmlFile) {
+  el('btn-open').addEventListener('click', () => void onOpenClickElectron());
+} else {
+  el('btn-open').addEventListener('click', () => toggleOpenFileMode());
+  initBrowserOpenUi();
+}
 
 const btnSave = el('btn-save');
 const btnSaveAs = el('btn-save-as');
@@ -1021,8 +1386,64 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && activeEditEl) {
     e.preventDefault();
     cancelInlineEdit(activeEditEl);
+    return;
+  }
+  if (e.key === 'Escape' && openFileModeActive) {
+    exitOpenFileMode();
   }
 });
+
+setPreviewLoadedState(false);
+
+const btnEditLock = el('btn-edit-lock');
+const btnToggleSidebar = el('btn-toggle-sidebar');
+let sidebarOutlineVisible = true;
+
+function updateLockButtonUi() {
+  const b = btnEditLock;
+  if (!b) return;
+  const openSvg = b.querySelector('.btn-icon-lock-open');
+  const closedSvg = b.querySelector('.btn-icon-lock-closed');
+  b.setAttribute('aria-pressed', editingLocked ? 'true' : 'false');
+  b.title = editingLocked ? 'Unlock editing' : 'Lock editing';
+  b.setAttribute('aria-label', b.title);
+  if (openSvg) openSvg.hidden = editingLocked;
+  if (closedSvg) closedSvg.hidden = !editingLocked;
+}
+
+function updateSidebarToggleUi() {
+  const b = btnToggleSidebar;
+  if (!b) return;
+  const main = document.querySelector('.main');
+  const eye = b.querySelector('.btn-icon-eye');
+  const eyeOff = b.querySelector('.btn-icon-eye-off');
+  b.setAttribute('aria-pressed', sidebarOutlineVisible ? 'true' : 'false');
+  b.title = sidebarOutlineVisible ? 'Hide outline panel' : 'Show outline panel';
+  b.setAttribute('aria-label', b.title);
+  if (eye) eye.hidden = !sidebarOutlineVisible;
+  if (eyeOff) eyeOff.hidden = sidebarOutlineVisible;
+  if (main) main.classList.toggle('sidebar-hidden', !sidebarOutlineVisible);
+  const aside = el('sidebar-outline');
+  if (aside) aside.setAttribute('aria-hidden', (!sidebarOutlineVisible).toString());
+}
+
+btnEditLock?.addEventListener('click', () => {
+  const nextLocked = !editingLocked;
+  if (nextLocked && activeEditEl) {
+    commitInlineEdit(activeEditEl);
+  }
+  editingLocked = nextLocked;
+  updateLockButtonUi();
+  syncPreviewLockClass();
+});
+
+btnToggleSidebar?.addEventListener('click', () => {
+  sidebarOutlineVisible = !sidebarOutlineVisible;
+  updateSidebarToggleUi();
+});
+
+updateLockButtonUi();
+updateSidebarToggleUi();
 
 window.__htmlPreviewDebug = {
   getWorkingDom: () => workingDom,
@@ -1033,6 +1454,8 @@ window.__htmlPreviewDebug = {
   getDirty: () => documentDirty,
   getActiveEditElement: () => activeEditEl,
   getActiveOutlineEditorId: () => activeOutlineEditorId,
+  getLastDomTextWrapAudit: () => lastDomTextWrapAudit.slice(),
+  verifyTextCoverage: () => (workingDom ? verifyAllVisibleTextUnderEditorHost(workingDom) : { ok: true, failures: [] }),
   syncLiveEditToWorkingDom,
   rebuildOutline,
 };
