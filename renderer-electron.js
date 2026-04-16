@@ -23,6 +23,10 @@ const EDITABLE_TAGS = new Set([
   'figcaption',
   'button',
   'label',
+  'strong',
+  'em',
+  'b',
+  'i',
 ]);
 
 /** Phrasing content allowed inside span/div text holders (no layout blocks). */
@@ -258,147 +262,41 @@ function getContainerHint(node) {
   return undefined;
 }
 
-/**
- * Highest numeric suffix among `data-editor-id="ed-N"` (N integer). Returns -1 if none.
- * @param {Document} doc
- */
-function getMaxNumericEditorIndex(doc) {
-  let max = -1;
-  doc.querySelectorAll(`[${EDITOR_ID_ATTR}]`).forEach((el) => {
-    const v = el.getAttribute(EDITOR_ID_ATTR) || '';
-    const m = new RegExp(`^${EDITOR_ID_PREFIX}(\\d+)$`).exec(v);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  });
-  return max;
+/** Inline normalize helpers (`wrapUnhostedVisibleText`, `mergeAdjacentPlainEditorSpans`, `verify…`) live in `normalize-inline.js`. */
+function pn() {
+  const api = globalThis.plainstackNormalize;
+  if (!api) {
+    throw new Error('plainstackNormalize not loaded — include normalize-inline.js before renderer.js');
+  }
+  return api;
+}
+
+/** Committing plain text into hosts without flattening inline markup when possible (`editor-host-sync.js`). */
+function ehs() {
+  const api = globalThis.plainstackEditorHostSync;
+  if (!api) {
+    throw new Error('plainstackEditorHostSync not loaded — include editor-host-sync.js before renderer.js');
+  }
+  return api;
 }
 
 /**
- * True if this text node has an ancestor element carrying `data-editor-id`.
- * @param {Text} textNode
+ * Smallest [data-editor-id] host that contains the event target (walk leaf → root).
+ * Avoids activating an outer stamped ancestor when nested runs exist.
+ * @param {EventTarget | null} raw
+ * @returns {Element | null}
  */
-function isTextNodeInsideEditorHost(textNode) {
-  let el = textNode.parentElement;
+function findDeepestEditableEditorHost(raw) {
+  const node = raw && /** @type {any} */ (raw).nodeType === Node.TEXT_NODE ? /** @type {Text} */ (raw).parentElement : /** @type {Element | null} */ (raw);
+  if (!node) return null;
+  let el = node.nodeType === Node.ELEMENT_NODE ? /** @type {Element} */ (node) : node.parentElement;
   while (el) {
-    if (el.hasAttribute(EDITOR_ID_ATTR)) return true;
+    if (el.hasAttribute(EDITOR_ID_ATTR) && isEditableElement(el)) {
+      return el;
+    }
     el = el.parentElement;
   }
-  return false;
-}
-
-/**
- * True when every visible (non-whitespace-only) text node in the subtree sits under some [data-editor-id] ancestor.
- * @param {Element} rootEl
- */
-function subtreeTextFullyUnderEditorHosts(rootEl) {
-  const doc = rootEl.ownerDocument;
-  if (!doc) return false;
-  let sawVisible = false;
-  const tw = doc.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const p = node.parentElement;
-      if (!p || !rootEl.contains(p)) return NodeFilter.FILTER_REJECT;
-      const t = p.tagName.toLowerCase();
-      if (t === 'script' || t === 'style' || t === 'noscript' || t === 'template') return NodeFilter.FILTER_REJECT;
-      if (p.closest && p.closest('svg')) return NodeFilter.FILTER_REJECT;
-      if (t === 'textarea') return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  while (tw.nextNode()) {
-    const tn = tw.currentNode;
-    if (!tn.data || !/\S/.test(tn.data)) continue;
-    sawVisible = true;
-    if (!isTextNodeInsideEditorHost(tn)) return false;
-  }
-  return sawVisible;
-}
-
-/**
- * Wrap visible text not under any [data-editor-id] in `<span data-editor-id="ed-N">…</span>`.
- * Preserves existing IDs; new N continues after max existing numeric id. Does not wrap whitespace-only nodes.
- * @param {Document} doc
- * @returns {Array<{ assignedId: string, parentTag: string, parentSelectorHint: string, textPreview: string }>}
- */
-function wrapUnhostedVisibleText(doc) {
-  /** @type {Array<{ assignedId: string, parentTag: string, parentSelectorHint: string, textPreview: string }>} */
-  const audit = [];
-  if (!doc.body) return audit;
-
-  let next = getMaxNumericEditorIndex(doc) + 1;
-  /** @type {Text[]} */
-  const batch = [];
-  const tw = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const p = node.parentElement;
-      if (!p) return NodeFilter.FILTER_REJECT;
-      const t = p.tagName.toLowerCase();
-      if (t === 'script' || t === 'style' || t === 'noscript' || t === 'template') return NodeFilter.FILTER_REJECT;
-      if (p.closest && p.closest('svg')) return NodeFilter.FILTER_REJECT;
-      if (t === 'textarea') return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  while (tw.nextNode()) batch.push(/** @type {Text} */ (tw.currentNode));
-
-  for (const textNode of batch) {
-    const raw = textNode.data;
-    if (!raw || !/\S/.test(raw)) continue;
-    if (isTextNodeInsideEditorHost(textNode)) continue;
-
-    const parent = textNode.parentElement;
-    if (!parent) continue;
-
-    const id = `${EDITOR_ID_PREFIX}${next}`;
-    next += 1;
-
-    audit.push({
-      assignedId: id,
-      parentTag: parent.tagName.toLowerCase(),
-      parentSelectorHint: buildSelectorPath(parent),
-      textPreview: truncate(raw.replace(/\s+/g, ' ').trim(), 80),
-    });
-
-    const span = doc.createElement('span');
-    span.setAttribute(EDITOR_ID_ATTR, id);
-    const preserved = textNode.data;
-    parent.replaceChild(span, textNode);
-    span.textContent = preserved;
-  }
-
-  return audit;
-}
-
-/**
- * Post-condition check: every visible text node lies under a [data-editor-id] ancestor.
- * @param {Document} doc
- */
-function verifyAllVisibleTextUnderEditorHost(doc) {
-  /** @type {Array<{ textPreview: string, parentTag: string }>} */
-  const failures = [];
-  if (!doc.body) return { ok: true, failures };
-
-  const tw = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const p = node.parentElement;
-      if (!p) return NodeFilter.FILTER_REJECT;
-      const t = p.tagName.toLowerCase();
-      if (t === 'script' || t === 'style' || t === 'noscript' || t === 'template') return NodeFilter.FILTER_REJECT;
-      if (p.closest && p.closest('svg')) return NodeFilter.FILTER_REJECT;
-      if (t === 'textarea') return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  while (tw.nextNode()) {
-    const tn = tw.currentNode;
-    if (!tn.data || !/\S/.test(tn.data)) continue;
-    if (!isTextNodeInsideEditorHost(tn)) {
-      failures.push({
-        textPreview: truncate((tn.data || '').replace(/\s+/g, ' ').trim(), 80),
-        parentTag: tn.parentElement ? tn.parentElement.tagName.toLowerCase() : '?',
-      });
-    }
-  }
-  return { ok: failures.length === 0, failures };
+  return null;
 }
 
 /**
@@ -409,7 +307,7 @@ function verifyAllVisibleTextUnderEditorHost(doc) {
  */
 function stampEditorIds(doc) {
   if (!doc.body) return 0;
-  let n = getMaxNumericEditorIndex(doc) + 1;
+  let n = pn().getMaxNumericEditorIndex(doc) + 1;
 
   const walk = (node) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -420,7 +318,7 @@ function stampEditorIds(doc) {
 
     if (isEditableElement(element)) {
       if (!element.hasAttribute(EDITOR_ID_ATTR)) {
-        if (subtreeTextFullyUnderEditorHosts(element)) {
+        if (pn().subtreeTextFullyUnderEditorHosts(element)) {
           /* e.g. <p><span data-editor-id>…</span></p> — editable text only in children */
         } else {
           element.setAttribute(EDITOR_ID_ATTR, `${EDITOR_ID_PREFIX}${n}`);
@@ -605,13 +503,16 @@ let editingLocked = false;
 /** Locations where loose text was wrapped before the last stamp (see wrapUnhostedVisibleText). */
 let lastDomTextWrapAudit = [];
 
+/** Count of adjacent plain `span[data-editor-id]` merges in the last `runPlainstackInlineNormalize`. */
+let lastDomMergeAdjacentCount = 0;
+
 function syncLiveEditToWorkingDom(editorId, newText) {
   if (!workingDom) return;
   const safeId = editorId.replace(/[^a-zA-Z0-9_-]/g, '');
   if (safeId !== editorId) return;
   const w = workingDom.querySelector(`[${EDITOR_ID_ATTR}="${safeId}"]`);
   if (w) {
-    w.textContent = normalizePlainText(newText);
+    ehs().applyPlainTextToEditorHost(/** @type {Element} */ (w), normalizePlainText(newText));
   }
 }
 
@@ -776,11 +677,8 @@ function attachPreviewEditListeners(frame) {
     'click',
     (e) => {
       const raw = e.target;
-      const start =
-        raw && raw.nodeType === Node.TEXT_NODE ? /** @type {Node} */ (raw).parentElement : /** @type {Element} */ (raw);
-      if (!start || start.nodeType !== Node.ELEMENT_NODE) return;
-      const block = /** @type {Element} */ (start).closest(`[${EDITOR_ID_ATTR}]`);
-      if (!block || !isEditableElement(block)) return;
+      const block = findDeepestEditableEditorHost(/** @type {Node} */ (raw));
+      if (!block) return;
       if (activeEditEl === block) return;
       if (editingLocked) return;
 
@@ -841,8 +739,26 @@ function injectPreviewEditStyles(idoc) {
   if (!idoc.head || idoc.getElementById('preview-editor-styles')) return;
   const s = idoc.createElement('style');
   s.id = 'preview-editor-styles';
+  const runCls = pn().PLAINSTACK_RUN_CLASS || 'plainstack-edit-run';
   s.textContent = `
-    [${EDITOR_ID_ATTR}] { cursor: text; }
+    [${EDITOR_ID_ATTR}] {
+      cursor: text;
+      white-space: pre-wrap;
+    }
+    .${runCls} {
+      color: inherit;
+      font: inherit;
+      font-weight: inherit;
+      font-style: inherit;
+      text-decoration: inherit;
+      letter-spacing: inherit;
+      background: transparent;
+      border: none;
+      padding: 0;
+      margin: 0;
+      display: inline;
+      vertical-align: baseline;
+    }
     [${EDITOR_ID_ATTR}]:hover:not(.preview-editing) {
       outline: 1px dashed rgba(13, 110, 253, 0.45);
       outline-offset: 2px;
@@ -1165,12 +1081,17 @@ function loadHtmlIntoApp(html, filePath = null) {
     return;
   }
 
-  lastDomTextWrapAudit = wrapUnhostedVisibleText(parsed);
+  const inlineNorm = pn().runPlainstackInlineNormalize(parsed);
+  lastDomTextWrapAudit = inlineNorm.audit;
+  lastDomMergeAdjacentCount = inlineNorm.mergedAdjacentSpans;
   if (lastDomTextWrapAudit.length) {
     console.info('[plainstack] Wrapped loose text (outside [data-editor-id]):', lastDomTextWrapAudit);
   }
+  if (lastDomMergeAdjacentCount > 0) {
+    console.info('[plainstack] Merged adjacent plain editor spans:', lastDomMergeAdjacentCount);
+  }
   stampEditorIds(parsed);
-  const coverage = verifyAllVisibleTextUnderEditorHost(parsed);
+  const coverage = pn().verifyAllVisibleTextUnderEditorHost(parsed);
   if (!coverage.ok) {
     console.warn('[plainstack] Text nodes still outside [data-editor-id] after normalize:', coverage.failures);
   }
@@ -1455,7 +1376,8 @@ window.__htmlPreviewDebug = {
   getActiveEditElement: () => activeEditEl,
   getActiveOutlineEditorId: () => activeOutlineEditorId,
   getLastDomTextWrapAudit: () => lastDomTextWrapAudit.slice(),
-  verifyTextCoverage: () => (workingDom ? verifyAllVisibleTextUnderEditorHost(workingDom) : { ok: true, failures: [] }),
+  verifyTextCoverage: () => (workingDom ? pn().verifyAllVisibleTextUnderEditorHost(workingDom) : { ok: true, failures: [] }),
+  getLastDomMergeAdjacentCount: () => lastDomMergeAdjacentCount,
   syncLiveEditToWorkingDom,
   rebuildOutline,
 };
