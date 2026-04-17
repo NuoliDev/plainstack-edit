@@ -741,8 +741,12 @@ function injectPreviewEditStyles(idoc) {
   s.id = 'preview-editor-styles';
   const runCls = pn().PLAINSTACK_RUN_CLASS || 'plainstack-edit-run';
   s.textContent = `
+    /* Do not set white-space on all [data-editor-id] — it is injected after author CSS and would
+       override slide/deck rules (e.g. section.slide) that use the same attribute. Only inline runs. */
     [${EDITOR_ID_ATTR}] {
       cursor: text;
+    }
+    span[${EDITOR_ID_ATTR}] {
       white-space: pre-wrap;
     }
     .${runCls} {
